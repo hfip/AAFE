@@ -1,9 +1,14 @@
 const cheerio = require('cheerio');
-const { cfGet } = require('./cloudflare');
+const { cfGet, cfPost } = require('./cloudflare');
 
 async function getDoc(url) {
   const html = await cfGet(url);
-  return cheerio.load(html);
+  return cheerio.load(typeof html === 'string' ? html : JSON.stringify(html));
+}
+
+async function postDoc(url, formData) {
+  const data = await cfPost(url, formData);
+  return { data, $: cheerio.load(typeof data === 'string' ? data : '') };
 }
 
 function toAbsolute(url, base) {
@@ -13,4 +18,14 @@ function toAbsolute(url, base) {
   return base.replace(/\/$/, '') + url;
 }
 
-module.exports = { getDoc, toAbsolute };
+// استخراج Base URL من أي رابط (يحل مشكلة الـ redirect)
+function getBaseUrl(url) {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return url;
+  }
+}
+
+module.exports = { getDoc, postDoc, toAbsolute, getBaseUrl };
