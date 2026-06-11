@@ -1,90 +1,73 @@
-const { addonBuilder, serveHTTP } = require('stremio-addon-sdk');
-
-// استيراد كل المصادر
-const Akwam    = require('../providers/akwam');
+const { addonInterface, serveHTTP } = require('stremio-addon-sdk');
+const Akwam = require('../providers/akwam');
 const ArabSeed = require('../providers/arabseed');
-const FaselHD  = require('../providers/faselhd');
 
-const providers = [
-  new Akwam(),
-  new ArabSeed(),
-  new FaselHD(),
-];
+const akwamProvider = new Akwam();
+const arabseedProvider = new ArabSeed();
 
-// ── Manifest ──────────────────────────────────────────────
 const manifest = {
-  id: 'com.arabic.addon',
+  id: 'community.arabic.addon',
   version: '1.0.0',
-  name: '🎬 Arabic Addon',
-  description: 'أفلام ومسلسلات عربية — ArabSeed + Akwam + FaselHD',
-  logo: 'https://i.imgur.com/xxxxxx.png', // ← غيّر الصورة
-  resources: ['catalog', 'stream', 'meta'],
+  name: 'Arabic Streams Addon',
+  description: 'إضافة عربية لمشاهدة الأفلام والمسلسلات من أكوام وعرب سيد',
+  resources: ['catalog', 'search', 'meta', 'stream'],
   types: ['movie', 'series'],
-  idPrefixes: ['akwam:', 'arabseed:', 'faselhd:'],
+  idPrefixes: ['akwam:', 'arabseed:'],
   catalogs: [
-    // Akwam
-    { type: 'movie',  id: 'akwam_movies',  name: '🎬 Akwam أفلام' },
-    { type: 'series', id: 'akwam_series',  name: '📺 Akwam مسلسلات' },
-    // ArabSeed
-    { type: 'movie',  id: 'arabseed_movies',  name: '🎬 ArabSeed أفلام' },
-    { type: 'series', id: 'arabseed_series',  name: '📺 ArabSeed مسلسلات' },
-    // FaselHD
-    { type: 'movie',  id: 'faselhd_movies',  name: '🎬 FaselHD أفلام' },
-    { type: 'series', id: 'faselhd_series',  name: '📺 FaselHD مسلسلات' },
-  ],
+    { type: 'movie', id: 'arabic_movies', name: 'أفلام عربية' },
+    { type: 'series', id: 'arabic_series', name: 'مسلسلات عربية' }
+  ]
 };
 
-const builder = new addonBuilder(manifest);
+const builder = new addonInterface(manifest);
 
-// ── Catalog Handler ────────────────────────────────────────
-builder.defineCatalogHandler(async ({ type, id, extra }) => {
-  const page = extra?.skip ? Math.floor(extra.skip / 20) + 1 : 1;
-  const [providerName] = id.split('_');
-
-  const provider = providers.find(p => p.catalogId === providerName);
-  if (!provider) return { metas: [] };
-
-  try {
-    const metas = await provider.getCatalog(type, page);
-    return { metas };
-  } catch (e) {
-    console.error(`Catalog error [${id}]:`, e.message);
-    return { metas: [] };
+// 1. معالجة الـ Catalogs (القائمة الرئيسية)
+builder.defineCatalogHandler(async (args) => {
+  if (args.id === 'arabic_movies' || args.id === 'arabic_series') {
+    const type = args.type; // movie أو series
+    const akwamItems = await akwamProvider.getCatalog(type);
+    const seedItems = await arabseedProvider.getCatalog(type);
+    return { catalogs: [...akwamItems, ...seedItems] };
   }
+  return { catalogs: [] };
 });
 
-// ── Stream Handler ─────────────────────────────────────────
-builder.defineStreamHandler(async ({ type, id }) => {
-  // id مثل: akwam:BASE64URL
-  const [providerName, encodedUrl] = id.split(':');
-  const provider = providers.find(p => p.catalogId === providerName);
-  if (!provider) return { streams: [] };
+// 2. معالجة البحث (Search)
+builder.defineSearchHandler(async (args) => {
+  const query = args.query;
+  const akwamResults = await akwamProvider.search(query);
+  const seedResults = await arabseedProvider.search(query);
+  return { catalogs: [...akwamResults, ...seedResults] };
+});
 
-  try {
-    const streams = await provider.getStreams(encodedUrl);
+// 3. معالجة البيانات الوصفية (Meta)
+builder.defineMetaHandler(async (args) => {
+  const [provider, encodedUrl] = args.id.split(':');
+  if (provider === 'akwam') {
+    const meta = await akwamProvider.getMeta(encodedUrl);
+    return { meta: { id: args.id, type: args.type, ...meta } };
+  } else if (provider === 'arabseed') {
+    // يمكنك إضافة دالة getMeta لعرب سيد بنفس طريقة أكوام لاحقاً إذا أردت
+    return { meta: { id: args.id, type: args.type, title: 'ArabSeed Video' } };
+  }
+  return { meta: null };
+});
+
+// 4. معالجة روابط التشغيل (Streams)
+builder.defineStreamHandler(async (args) => {
+  const [provider, encodedUrl] = args.id.split(':');
+  if (provider === 'akwam') {
+    const streams = await akwamProvider.getStreams(encodedUrl);
     return { streams };
-  } catch (e) {
-    console.error(`Stream error [${id}]:`, e.message);
-    return { streams: [] };
+  } else if (provider === 'arabseed') {
+    const streams = await arabseedProvider.getStreams(encodedUrl);
+    return { streams };
   }
+  return { streams: [] };
 });
 
-// ── Meta Handler ───────────────────────────────────────────
-builder.defineMetaHandler(async ({ type, id }) => {
-  const [providerName, encodedUrl] = id.split(':');
-  const provider = providers.find(p => p.catalogId === providerName);
-  if (!provider) return { meta: null };
-
-  try {
-    const meta = await provider.getMeta(encodedUrl);
-    return { meta: { ...meta, id, type } };
-  } catch {
-    return { meta: null };
-  }
-});
-
-// ── تشغيل Vercel ───────────────────────────────────────────
+// التوافق مع رفع Vercel كدالة Serverless
 module.exports = (req, res) => {
-  const addonInterface = builder.getInterface();
-  serveHTTP(addonInterface, { port: 3000 });
+  const createServer = serveHTTP(builder.getInterface(), { path: '/' });
+  createServer(req, res);
 };
