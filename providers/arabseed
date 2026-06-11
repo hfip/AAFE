@@ -1,34 +1,49 @@
 const BaseProvider = require('./base');
-const { getDoc, toAbsolute } = require('../utils/scraper');
-const axios = require('axios');
+const { getDoc, toAbsolute, getBaseUrl, cfPost } = require('../utils/scraper');
 
 class ArabSeed extends BaseProvider {
   constructor() {
     super();
     this.name = 'ArabSeed';
-    this.baseUrl = 'https://asd.pics';
+    this.baseUrl = 'https://m.asd.ink'; 
     this.catalogId = 'arabseed';
   }
 
+  async resolveBaseUrl() {
+    const mirrors = [
+      'https://m.asd.ink',
+      'https://asdnet2.arabseed.net',
+      'https://m1.arabseed.lol',
+      'https://m7.arabseed.wiki',
+    ];
+    for (const mirror of mirrors) {
+      try {
+        const res = await require('axios').get(mirror, { timeout: 5000, maxRedirects: 2 });
+        if (res.status === 200) {
+          this.baseUrl = getBaseUrl(res.request?.res?.responseUrl || mirror);
+          return this.baseUrl;
+        }
+      } catch {}
+    }
+    return this.baseUrl;
+  }
+
   async getCatalog(type, page = 1) {
+    await this.resolveBaseUrl();
     const path = type === 'movie' ? '/movies/' : '/main0/';
-    const url = page > 1
-      ? `${this.baseUrl}${path}page/${page}/`
-      : `${this.baseUrl}${path}`;
+    const url = page > 1 ? `${this.baseUrl}${path}page/${page}/` : `${this.baseUrl}${path}`;
 
     const $ = await getDoc(url);
     const items = [];
 
     $('.movie__block').each((_, el) => {
       const title = $(el).find('h3').text().trim();
-      const href = $(el).attr('href')
-                || $(el).closest('a').attr('href');
-      const poster = $(el).find('img').attr('data-src')
-                  || $(el).find('img').attr('src');
+      const href = $(el).attr('href') || $(el).closest('a').attr('href');
+      const poster = $(el).find('img').attr('data-src') || $(el).find('img').attr('src');
       if (!title || !href) return;
 
       items.push({
-        id: `arabseed:${Buffer.from(href).toString('base64')}`,
+        id: `arabseed:${Buffer.from(toAbsolute(href, this.baseUrl)).toString('base64')}`,
         type,
         name: title,
         poster: toAbsolute(poster || '', this.baseUrl),
@@ -39,7 +54,8 @@ class ArabSeed extends BaseProvider {
   }
 
   async search(query) {
-    const url = `${this.baseUrl}/find/?word=${query.replace(/ /g, '+')}`;
+    await this.resolveBaseUrl();
+    const url = `${this.baseUrl}/find/?word=${encodeURIComponent(query)}`;
     const $ = await getDoc(url);
     const items = [];
 
@@ -47,8 +63,7 @@ class ArabSeed extends BaseProvider {
       const a = $(el).find('a.movie__block');
       const title = a.attr('title') || a.find('h3').text().trim();
       const href = a.attr('href');
-      const poster = a.find('img').attr('data-src')
-                  || a.find('img').attr('src');
+      const poster = a.find('img').attr('data-src') || a.find('img').attr('src');
       if (!title || !href) return;
 
       const type = href.includes('%d9%81%d9%8a%d9%84%d9%85') ? 'movie' : 'series';
@@ -64,6 +79,7 @@ class ArabSeed extends BaseProvider {
   }
 
   async getStreams(encodedUrl) {
+    await this.resolveBaseUrl();
     const pageUrl = Buffer.from(encodedUrl, 'base64').toString();
     const $ = await getDoc(pageUrl);
 
@@ -73,8 +89,7 @@ class ArabSeed extends BaseProvider {
     const watchUrl = toAbsolute(watchBtn, this.baseUrl);
     const $w = await getDoc(watchUrl);
 
-    const csrfToken = $w('script').text()
-      .match(/'csrf__token':\s*"([^"]+)"/)?.[1];
+    const csrfToken = $w('script').text().match(/'csrf__token':\s*"([^"]+)"/)?.[1];
     const postId = $w('.servers__list li').first().attr('data-post');
     if (!csrfToken || !postId) return [];
 
@@ -86,16 +101,22 @@ class ArabSeed extends BaseProvider {
 
     for (const quality of qualities) {
       try {
-        const res = await axios.post(
-          `${this.baseUrl}/get__quality__servers/`,
-          new URLSearchParams({ post_id: postId, quality, csrf_token: csrfToken }),
-          { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': watchUrl } }
-        );
-        // معالجة السيرفرات وإضافة الروابط
-        const $ = require('cheerio').load(res.data?.html || '');
-        $('li').each((_, el) => {
-          const serverId = $(el).attr('data-server');
-          if (serverId) streams.push({ quality, serverId, postId, csrfToken, watchUrl });
+        // تم استبدال طلب axios المباشر بـ cfPost المار عبر سيرفر التخطي لحمايته من البلوك
+        const apiUrl = `${this.baseUrl}/get__quality__servers/`;
+        const postData = new URLSearchParams({ post_id: postId, quality, csrf_token: csrfToken }).toString();
+        
+        const rawHtml = await cfPost(apiUrl, postData);
+        const $s = require('cheerio').load(rawHtml || '');
+        
+        $s('li').each((_, el) => {
+          const serverName = $s(el).text().trim() || 'Server';
+          // ملاحظة: المواقع العربية تعرض الروابط غالباً داخل وسوم iframe أو خصائص بيانات 
+          // تم تهيئتها كعنوان فرعي هنا لتجنب كراش التشغيل المباشر
+          streams.push({
+            name: `ArabSeed [${quality}]`,
+            title: `${serverName} (${quality})`,
+            url: watchUrl // هنا يمكنك تطوير كود الكشط لجلب الرابط الصافي الداخلي للسيرفر لاحقاً
+          });
         });
       } catch {}
     }
