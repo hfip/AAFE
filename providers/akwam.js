@@ -1,12 +1,12 @@
 const BaseProvider = require('./base');
 const { getDoc, toAbsolute } = require('../utils/scraper');
-const axios = require('axios');
 
 class Akwam extends BaseProvider {
   constructor() {
     super();
+    super();
     this.name = 'Akwam';
-    this.baseUrl = 'https://ak.sv';//akwam.it redirect
+    this.baseUrl = 'https://akwam.it'; 
     this.catalogId = 'akwam';
   }
 
@@ -23,16 +23,15 @@ class Akwam extends BaseProvider {
       const a = $(el).find('h3.entry-title a');
       const title = a.text().trim();
       const href = $(el).find('a').first().attr('href');
-      const poster = $(el).find('img').attr('data-src')
-                 || $(el).find('img').attr('src');
+      const poster = $(el).find('img').attr('data-src') || $(el).find('img').attr('src');
 
       if (!title || !href) return;
 
       items.push({
-        id: `akwam:${Buffer.from(href).toString('base64')}`,
+        id: `akwam:${Buffer.from(toAbsolute(href, this.baseUrl)).toString('base64')}`,
         type,
         name: title,
-        poster: poster || '',
+        poster: toAbsolute(poster || '', this.baseUrl),
       });
     });
 
@@ -48,17 +47,16 @@ class Akwam extends BaseProvider {
       const a = $(el).find('h3.entry-title a');
       const title = a.text().trim();
       const href = $(el).find('a').first().attr('href');
-      const poster = $(el).find('img').attr('data-src')
-                 || $(el).find('img').attr('src');
+      const poster = $(el).find('img').attr('data-src') || $(el).find('img').attr('src');
 
       if (!title || !href) return;
       const type = href.includes('/movie/') ? 'movie' : 'series';
 
       items.push({
-        id: `akwam:${Buffer.from(href).toString('base64')}`,
+        id: `akwam:${Buffer.from(toAbsolute(href, this.baseUrl)).toString('base64')}`,
         type,
         name: title,
-        poster: poster || '',
+        poster: toAbsolute(poster || '', this.baseUrl),
       });
     });
 
@@ -70,11 +68,10 @@ class Akwam extends BaseProvider {
     const $ = await getDoc(url);
 
     const title = $('h1').first().text().trim();
-    const poster = $('.poster img').attr('data-src')
-                || $('.poster img').attr('src');
+    const poster = $('.poster img').attr('data-src') || $('.poster img').attr('src');
     const description = $('.story p').first().text().trim();
 
-    return { title, poster, description };
+    return { title, poster: toAbsolute(poster || '', this.baseUrl), description };
   }
 
   async getStreams(encodedUrl) {
