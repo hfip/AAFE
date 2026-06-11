@@ -1,0 +1,107 @@
+const BaseProvider = require('./base');
+const { getDoc, toAbsolute } = require('../utils/scraper');
+const axios = require('axios');
+
+class ArabSeed extends BaseProvider {
+  constructor() {
+    super();
+    this.name = 'ArabSeed';
+    this.baseUrl = 'https://asd.pics';
+    this.catalogId = 'arabseed';
+  }
+
+  async getCatalog(type, page = 1) {
+    const path = type === 'movie' ? '/movies/' : '/main0/';
+    const url = page > 1
+      ? `${this.baseUrl}${path}page/${page}/`
+      : `${this.baseUrl}${path}`;
+
+    const $ = await getDoc(url);
+    const items = [];
+
+    $('.movie__block').each((_, el) => {
+      const title = $(el).find('h3').text().trim();
+      const href = $(el).attr('href')
+                || $(el).closest('a').attr('href');
+      const poster = $(el).find('img').attr('data-src')
+                  || $(el).find('img').attr('src');
+      if (!title || !href) return;
+
+      items.push({
+        id: `arabseed:${Buffer.from(href).toString('base64')}`,
+        type,
+        name: title,
+        poster: toAbsolute(poster || '', this.baseUrl),
+      });
+    });
+
+    return items;
+  }
+
+  async search(query) {
+    const url = `${this.baseUrl}/find/?word=${query.replace(/ /g, '+')}`;
+    const $ = await getDoc(url);
+    const items = [];
+
+    $('ul.blocks__ul > li').each((_, el) => {
+      const a = $(el).find('a.movie__block');
+      const title = a.attr('title') || a.find('h3').text().trim();
+      const href = a.attr('href');
+      const poster = a.find('img').attr('data-src')
+                  || a.find('img').attr('src');
+      if (!title || !href) return;
+
+      const type = href.includes('%d9%81%d9%8a%d9%84%d9%85') ? 'movie' : 'series';
+      items.push({
+        id: `arabseed:${Buffer.from(toAbsolute(href, this.baseUrl)).toString('base64')}`,
+        type,
+        name: title,
+        poster: toAbsolute(poster || '', this.baseUrl),
+      });
+    });
+
+    return items;
+  }
+
+  async getStreams(encodedUrl) {
+    const pageUrl = Buffer.from(encodedUrl, 'base64').toString();
+    const $ = await getDoc(pageUrl);
+
+    const watchBtn = $('a.btton.watch__btn').attr('href');
+    if (!watchBtn) return [];
+
+    const watchUrl = toAbsolute(watchBtn, this.baseUrl);
+    const $w = await getDoc(watchUrl);
+
+    const csrfToken = $w('script').text()
+      .match(/'csrf__token':\s*"([^"]+)"/)?.[1];
+    const postId = $w('.servers__list li').first().attr('data-post');
+    if (!csrfToken || !postId) return [];
+
+    const streams = [];
+    const qualities = [];
+    $w('.quality__swither ul.qualities__list li').each((_, el) => {
+      qualities.push($w(el).attr('data-quality'));
+    });
+
+    for (const quality of qualities) {
+      try {
+        const res = await axios.post(
+          `${this.baseUrl}/get__quality__servers/`,
+          new URLSearchParams({ post_id: postId, quality, csrf_token: csrfToken }),
+          { headers: { 'X-Requested-With': 'XMLHttpRequest', 'Referer': watchUrl } }
+        );
+        // معالجة السيرفرات وإضافة الروابط
+        const $ = require('cheerio').load(res.data?.html || '');
+        $('li').each((_, el) => {
+          const serverId = $(el).attr('data-server');
+          if (serverId) streams.push({ quality, serverId, postId, csrfToken, watchUrl });
+        });
+      } catch {}
+    }
+
+    return streams;
+  }
+}
+
+module.exports = ArabSeed;
