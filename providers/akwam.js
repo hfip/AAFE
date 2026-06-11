@@ -6,7 +6,7 @@ class Akwam extends BaseProvider {
   constructor() {
     super();
     this.name = 'Akwam';
-    this.baseUrl = 'https://ak.sv';
+    this.baseUrl = 'https://ak.sv';//akwam.it redirect
     this.catalogId = 'akwam';
   }
 
