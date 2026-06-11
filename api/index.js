@@ -1,4 +1,3 @@
-const { addonInterface, serveHTTP } = require('stremio-addon-sdk');
 const Akwam = require('../providers/akwam');
 const ArabSeed = require('../providers/arabseed');
 
@@ -19,55 +18,72 @@ const manifest = {
   ]
 };
 
-const builder = new addonInterface(manifest);
+module.exports = async (req, res) => {
+  // تفعيل الـ CORS عشان تطبيق Stremio يقدر يقرا البيانات بدون حجب
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
 
-// 1. معالجة الـ Catalogs (القائمة الرئيسية)
-builder.defineCatalogHandler(async (args) => {
-  if (args.id === 'arabic_movies' || args.id === 'arabic_series') {
-    const type = args.type; // movie أو series
-    const akwamItems = await akwamProvider.getCatalog(type);
-    const seedItems = await arabseedProvider.getCatalog(type);
-    return { catalogs: [...akwamItems, ...seedItems] };
+  const urlPaths = req.url.split('/').filter(Boolean);
+
+  // إذا طلب الرابط الرئيسي، ارجع الـ Manifest الخاص بالإضافة
+  if (urlPaths.length === 0 || req.url === '/manifest.json') {
+    return res.status(200).json(manifest);
   }
-  return { catalogs: [] };
-});
 
-// 2. معالجة البحث (Search)
-builder.defineSearchHandler(async (args) => {
-  const query = args.query;
-  const akwamResults = await akwamProvider.search(query);
-  const seedResults = await arabseedProvider.search(query);
-  return { catalogs: [...akwamResults, ...seedResults] };
-});
+  try {
+    // تحليل المسار (مثال: /catalog/movie/arabic_movies.json)
+    const [resource, type, idWithJson] = urlPaths;
+    const id = idWithJson ? idWithJson.replace('.json', '') : '';
 
-// 3. معالجة البيانات الوصفية (Meta)
-builder.defineMetaHandler(async (args) => {
-  const [provider, encodedUrl] = args.id.split(':');
-  if (provider === 'akwam') {
-    const meta = await akwamProvider.getMeta(encodedUrl);
-    return { meta: { id: args.id, type: args.type, ...meta } };
-  } else if (provider === 'arabseed') {
-    // يمكنك إضافة دالة getMeta لعرب سيد بنفس طريقة أكوام لاحقاً إذا أردت
-    return { meta: { id: args.id, type: args.type, title: 'ArabSeed Video' } };
+    // 1. معالجة الـ Catalogs
+    if (resource === 'catalog') {
+      if (id === 'arabic_movies' || id === 'arabic_series') {
+        const akwamItems = await akwamProvider.getCatalog(type).catch(() => []);
+        const seedItems = await arabseedProvider.getCatalog(type).catch(() => []);
+        return res.status(200).json({ catalogs: [...akwamItems, ...seedItems] });
+      }
+      return res.status(200).json({ catalogs: [] });
+    }
+
+    // 2. معالجة البحث
+    if (resource === 'search') {
+      const query = decodeURIComponent(type.replace('.json', ''));
+      const akwamResults = await akwamProvider.search(query).catch(() => []);
+      const seedResults = await arabseedProvider.search(query).catch(() => []);
+      return res.status(200).json({ catalogs: [...akwamResults, ...seedResults] });
+    }
+
+    // 3. معالجة البيانات الوصفية (Meta)
+    if (resource === 'meta') {
+      const cleanId = decodeURIComponent(id);
+      const [provider, encodedUrl] = cleanId.split(':');
+      if (provider === 'akwam') {
+        const meta = await akwamProvider.getMeta(encodedUrl).catch(() => null);
+        return res.status(200).json({ meta: { id: cleanId, type, ...meta } });
+      } else if (provider === 'arabseed') {
+        return res.status(200).json({ meta: { id: cleanId, type, title: 'ArabSeed Video' } });
+      }
+      return res.status(200).json({ meta: null });
+    }
+
+    // 4. معالجة روابط التشغيل (Stream)
+    if (resource === 'stream') {
+      const cleanId = decodeURIComponent(id);
+      const [provider, encodedUrl] = cleanId.split(':');
+      if (provider === 'akwam') {
+        const streams = await akwamProvider.getStreams(encodedUrl).catch(() => []);
+        return res.status(200).json({ streams });
+      } else if (provider === 'arabseed') {
+        const streams = await arabseedProvider.getStreams(encodedUrl).catch(() => []);
+        return res.status(200).json({ streams });
+      }
+      return res.status(200).json({ streams: [] });
+    }
+
+    return res.status(404).json({ error: 'Not Found' });
+  } catch (error) {
+    console.error('Stremio Addon Error:', error);
+    return res.status(500).json({ error: 'Internal Server Error', details: error.message });
   }
-  return { meta: null };
-});
-
-// 4. معالجة روابط التشغيل (Streams)
-builder.defineStreamHandler(async (args) => {
-  const [provider, encodedUrl] = args.id.split(':');
-  if (provider === 'akwam') {
-    const streams = await akwamProvider.getStreams(encodedUrl);
-    return { streams };
-  } else if (provider === 'arabseed') {
-    const streams = await arabseedProvider.getStreams(encodedUrl);
-    return { streams };
-  }
-  return { streams: [] };
-});
-
-// التوافق مع رفع Vercel كدالة Serverless
-module.exports = (req, res) => {
-  const createServer = serveHTTP(builder.getInterface(), { path: '/' });
-  createServer(req, res);
 };
