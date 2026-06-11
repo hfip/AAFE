@@ -2,7 +2,7 @@ const cheerio = require('cheerio');
 const axios = require('axios');
 
 // ضع هنا رابط الـ Space الخاص بك على Hugging Face
-const HF_SOLVER_URL = 'https://YOUR_SPACE_SUBDOMAIN.hf.space'; 
+const HF_SOLVER_URL = 'https://hfip-universal-scrapling-solver.hf.space'; 
 
 async function cfGet(url) {
   try {
